@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -70,7 +71,11 @@ func (h appHandler) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	logs, err := h.deployer.Deploy(r.Context(), repo)
 	if err != nil {
 		h.logger.Error("deploy failed", "repo", repo, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
+		status := http.StatusInternalServerError
+		if errors.Is(err, service.ErrRepoBusy) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]string{
 			"error": sanitizeResponseValue(err.Error()),
 			"logs":  sanitizeResponseValue(logs),
 			"repo":  repo,
@@ -94,7 +99,11 @@ func (h appHandler) handleRollback(w http.ResponseWriter, r *http.Request) {
 	logs, err := h.deployer.Rollback(r.Context(), repo)
 	if err != nil {
 		h.logger.Error("rollback failed", "repo", repo, "error", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{
+		status := http.StatusInternalServerError
+		if errors.Is(err, service.ErrRepoBusy) {
+			status = http.StatusConflict
+		}
+		writeJSON(w, status, map[string]string{
 			"error": sanitizeResponseValue(err.Error()),
 			"logs":  sanitizeResponseValue(logs),
 			"repo":  repo,

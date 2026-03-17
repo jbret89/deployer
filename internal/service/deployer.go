@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,6 +13,8 @@ import (
 
 	"deployer/internal/config"
 )
+
+var ErrRepoBusy = errors.New("repository is already being processed")
 
 type Deployer struct {
 	executor *CommandExecutor
@@ -50,7 +53,10 @@ func newDeployerWithDependencies(cfg config.Config, logger *slog.Logger, executo
 }
 
 func (d *Deployer) Deploy(_ context.Context, repo string) (string, error) {
-	unlock := d.lockRepo(repo)
+	unlock, ok := d.tryLockRepo(repo)
+	if !ok {
+		return "", ErrRepoBusy
+	}
 	defer unlock()
 
 	repoPath := d.resolveRepoPath(repo)
@@ -99,7 +105,10 @@ func (d *Deployer) Deploy(_ context.Context, repo string) (string, error) {
 }
 
 func (d *Deployer) Rollback(_ context.Context, repo string) (string, error) {
-	unlock := d.lockRepo(repo)
+	unlock, ok := d.tryLockRepo(repo)
+	if !ok {
+		return "", ErrRepoBusy
+	}
 	defer unlock()
 
 	repoPath := d.resolveRepoPath(repo)
@@ -161,10 +170,13 @@ func (d *Deployer) ensureRepoDirectory(repoPath string) error {
 	}
 }
 
-func (d *Deployer) lockRepo(repo string) func() {
+func (d *Deployer) tryLockRepo(repo string) (func(), bool) {
 	lock, _ := d.locks.LoadOrStore(repo, &sync.Mutex{})
 	mutex := lock.(*sync.Mutex)
-	mutex.Lock()
+	if !mutex.TryLock() {
+		d.logger.Warn("repo busy", "repo", repo)
+		return nil, false
+	}
 
-	return mutex.Unlock
+	return mutex.Unlock, true
 }
