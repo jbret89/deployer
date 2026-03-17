@@ -12,18 +12,33 @@ import (
 
 type Deployer struct {
 	executor *CommandExecutor
-	git      *GitService
-	docker   *DockerService
+	git      gitOperations
+	docker   dockerOperations
 	config   config.Config
+}
+
+type gitOperations interface {
+	Clone(repo, path string) error
+	Fetch(path string) error
+	ResetHard(path, branch string) error
+	CheckoutCommit(path, commit string) error
+	GetPreviousCommit(path string) (string, error)
+}
+
+type dockerOperations interface {
+	ComposeUp(path, service string) error
 }
 
 func NewDeployer(cfg config.Config) *Deployer {
 	executor := NewCommandExecutor()
+	return newDeployerWithDependencies(cfg, executor, NewGitService(executor), NewDockerService(executor))
+}
 
+func newDeployerWithDependencies(cfg config.Config, executor *CommandExecutor, git gitOperations, docker dockerOperations) *Deployer {
 	return &Deployer{
 		executor: executor,
-		git:      NewGitService(executor),
-		docker:   NewDockerService(executor),
+		git:      git,
+		docker:   docker,
 		config:   cfg,
 	}
 }
