@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
@@ -15,9 +16,14 @@ type Server struct {
 	httpServer *http.Server
 }
 
+type deployerAPI interface {
+	Deploy(ctx context.Context, repo string) (string, error)
+	Rollback(ctx context.Context, repo string) (string, error)
+}
+
 type appHandler struct {
 	logger   *slog.Logger
-	deployer *service.Deployer
+	deployer deployerAPI
 }
 
 func NewServer(cfg config.Config, logger *slog.Logger, deployer *service.Deployer) *Server {
@@ -37,7 +43,7 @@ func (s *Server) ListenAndServe() error {
 	return s.httpServer.ListenAndServe()
 }
 
-func registerRoutes(mux *http.ServeMux, cfg config.Config, logger *slog.Logger, deployer *service.Deployer) {
+func registerRoutes(mux *http.ServeMux, cfg config.Config, logger *slog.Logger, deployer deployerAPI) {
 	handler := appHandler{
 		logger:   logger,
 		deployer: deployer,
