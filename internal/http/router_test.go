@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"deployer/internal/config"
+	"deployer/internal/service"
 )
 
 type fakeDeployer struct {
@@ -130,6 +132,32 @@ func TestDeployHandlerSanitizesResponseFields(t *testing.T) {
 	}
 	if payload["logs"] != "ok\nnext" {
 		t.Fatalf("expected sanitized logs, got %q", payload["logs"])
+	}
+}
+
+func TestDeployHandlerReturnsConflictWhenRepoIsBusy(t *testing.T) {
+	fake := &fakeDeployer{deployErr: service.ErrRepoBusy}
+	handler := buildTestHandler(config.Config{AdminToken: "secret"}, fake)
+
+	req := httptest.NewRequest(http.MethodPost, "/deploy/app", nil)
+	req.Header.Set("X-Admin-Token", "secret")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", rec.Code)
+	}
+
+	var payload map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !errors.Is(fake.deployErr, service.ErrRepoBusy) {
+		t.Fatal("expected busy error to be preserved")
+	}
+	if payload["error"] != service.ErrRepoBusy.Error() {
+		t.Fatalf("expected busy error message, got %q", payload["error"])
 	}
 }
 

@@ -202,36 +202,20 @@ func TestRollbackFailsWhenRepoDoesNotExist(t *testing.T) {
 	}
 }
 
-func TestLockRepoSerializesSameRepository(t *testing.T) {
+func TestTryLockRepoRejectsConcurrentAccess(t *testing.T) {
 	deployer := newDeployerWithDependencies(testConfig(t.TempDir()), testLogger(), nil, &fakeGit{}, &fakeDocker{})
 
-	unlock := deployer.lockRepo("app")
+	unlock, ok := deployer.tryLockRepo("app")
+	if !ok {
+		t.Fatal("expected first lock acquisition to succeed")
+	}
+	defer unlock()
 
-	acquired := make(chan struct{})
-	released := make(chan struct{})
-
-	go func() {
-		defer close(released)
-		secondUnlock := deployer.lockRepo("app")
-		close(acquired)
+	secondUnlock, ok := deployer.tryLockRepo("app")
+	if ok {
 		secondUnlock()
-	}()
-
-	select {
-	case <-acquired:
-		t.Fatal("expected second lock acquisition to block")
-	case <-time.After(50 * time.Millisecond):
+		t.Fatal("expected second lock acquisition to fail")
 	}
-
-	unlock()
-
-	select {
-	case <-acquired:
-	case <-time.After(time.Second):
-		t.Fatal("expected second lock acquisition to proceed after unlock")
-	}
-
-	<-released
 }
 
 func testConfig(basePath string) config.Config {
