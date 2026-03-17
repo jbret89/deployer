@@ -1,0 +1,20 @@
+services:
+  deployer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: deployer
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      PORT: "8080"
+      LOG_LEVEL: "INFO"
+      DEPLOY_BASE_PATH: /repos
+      GIT_BASE_SSH: "git@github.com:"
+      BRANCH: "main"
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./repos:/repos
+      - ${HOME}/.ssh:/root/.ssh:ro
