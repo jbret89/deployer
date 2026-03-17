@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"deployer/internal/config"
@@ -70,8 +71,8 @@ func (h appHandler) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logger.Error("deploy failed", "repo", repo, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": err.Error(),
-			"logs":  logs,
+			"error": sanitizeResponseValue(err.Error()),
+			"logs":  sanitizeResponseValue(logs),
 			"repo":  repo,
 		})
 		return
@@ -79,7 +80,7 @@ func (h appHandler) handleDeploy(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"repo": repo,
-		"logs": logs,
+		"logs": sanitizeResponseValue(logs),
 	})
 }
 
@@ -94,8 +95,8 @@ func (h appHandler) handleRollback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.logger.Error("rollback failed", "repo", repo, "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
-			"error": err.Error(),
-			"logs":  logs,
+			"error": sanitizeResponseValue(err.Error()),
+			"logs":  sanitizeResponseValue(logs),
 			"repo":  repo,
 		})
 		return
@@ -103,7 +104,7 @@ func (h appHandler) handleRollback(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"repo": repo,
-		"logs": logs,
+		"logs": sanitizeResponseValue(logs),
 	})
 }
 
@@ -140,4 +141,21 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.WriteHeader(status)
 
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func sanitizeResponseValue(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	value = strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return r
+		case r < 32 || r == 127:
+			return -1
+		default:
+			return r
+		}
+	}, value)
+
+	return strings.TrimSpace(value)
 }

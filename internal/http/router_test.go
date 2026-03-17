@@ -114,6 +114,25 @@ func TestRollbackHandlerReturnsLogsOnSuccess(t *testing.T) {
 	}
 }
 
+func TestDeployHandlerSanitizesResponseFields(t *testing.T) {
+	fake := &fakeDeployer{deployLogs: "ok\x00\r\nnext"}
+	handler := buildTestHandler(config.Config{AdminToken: "secret"}, fake)
+
+	req := httptest.NewRequest(http.MethodPost, "/deploy/app", nil)
+	req.Header.Set("X-Admin-Token", "secret")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	var payload map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if payload["logs"] != "ok\nnext" {
+		t.Fatalf("expected sanitized logs, got %q", payload["logs"])
+	}
+}
+
 func buildTestHandler(cfg config.Config, deployer deployerAPI) http.Handler {
 	mux := http.NewServeMux()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

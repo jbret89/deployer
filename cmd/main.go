@@ -23,7 +23,7 @@ func main() {
 		Level: cfg.LogLevel,
 	}))
 
-	deployerService := service.NewDeployer(cfg)
+	deployerService := service.NewDeployer(cfg, logger)
 	server := httpapi.NewServer(cfg, logger, deployerService)
 
 	logger.Info("starting deployer", "address", cfg.Address())
