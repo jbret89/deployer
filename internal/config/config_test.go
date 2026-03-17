@@ -3,6 +3,7 @@ package config
 import (
 	"log/slog"
 	"testing"
+	"time"
 )
 
 func TestLoadUsesDefaultsWhenEnvVarsAreMissing(t *testing.T) {
@@ -37,6 +38,9 @@ func TestLoadUsesDefaultsWhenEnvVarsAreMissing(t *testing.T) {
 	if cfg.AdminToken != "" {
 		t.Fatalf("expected empty admin token, got %q", cfg.AdminToken)
 	}
+	if cfg.CommandTimeout != defaultCommandTimeout {
+		t.Fatalf("expected default command timeout %s, got %s", defaultCommandTimeout, cfg.CommandTimeout)
+	}
 }
 
 func TestLoadUsesEnvVarsWhenProvided(t *testing.T) {
@@ -47,6 +51,7 @@ func TestLoadUsesEnvVarsWhenProvided(t *testing.T) {
 	t.Setenv("GIT_BASE_SSH", "git@github.com:my-org/")
 	t.Setenv("BRANCH", "develop")
 	t.Setenv("ADMIN_TOKEN", "secret")
+	t.Setenv("COMMAND_TIMEOUT", "30s")
 
 	cfg := Load()
 
@@ -70,5 +75,8 @@ func TestLoadUsesEnvVarsWhenProvided(t *testing.T) {
 	}
 	if cfg.AdminToken != "secret" {
 		t.Fatalf("expected admin token override, got %q", cfg.AdminToken)
+	}
+	if cfg.CommandTimeout != 30*time.Second {
+		t.Fatalf("expected command timeout override, got %s", cfg.CommandTimeout)
 	}
 }

@@ -3,6 +3,7 @@ package config
 import (
 	"log/slog"
 	"os"
+	"time"
 )
 
 const (
@@ -10,6 +11,7 @@ const (
 	defaultDeployBasePath = "./repos"
 	defaultGitBaseSSH     = "git@github.com:"
 	defaultBranch         = "main"
+	defaultCommandTimeout = 5 * time.Minute
 )
 
 type Config struct {
@@ -20,6 +22,7 @@ type Config struct {
 	GitBaseSSH     string
 	Branch         string
 	AdminToken     string
+	CommandTimeout time.Duration
 }
 
 func Load() Config {
@@ -31,6 +34,7 @@ func Load() Config {
 		GitBaseSSH:     getEnv("GIT_BASE_SSH", defaultGitBaseSSH),
 		Branch:         getEnv("BRANCH", defaultBranch),
 		AdminToken:     getEnv("ADMIN_TOKEN", ""),
+		CommandTimeout: parseDuration(getEnv("COMMAND_TIMEOUT", defaultCommandTimeout.String()), defaultCommandTimeout),
 	}
 }
 
@@ -49,6 +53,15 @@ func parseLogLevel(raw string) slog.Level {
 	}
 
 	return level
+}
+
+func parseDuration(raw string, fallback time.Duration) time.Duration {
+	duration, err := time.ParseDuration(raw)
+	if err != nil || duration <= 0 {
+		return fallback
+	}
+
+	return duration
 }
 
 func getEnv(key, fallback string) string {

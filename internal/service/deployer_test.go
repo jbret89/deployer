@@ -3,10 +3,13 @@ package service
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"deployer/internal/config"
 )
@@ -84,7 +87,7 @@ func TestDeployClonesMissingRepoAndRunsCompose(t *testing.T) {
 	basePath := t.TempDir()
 	git := &fakeGit{}
 	docker := &fakeDocker{}
-	deployer := newDeployerWithDependencies(testConfig(basePath), nil, git, docker)
+	deployer := newDeployerWithDependencies(testConfig(basePath), testLogger(), nil, git, docker)
 
 	logs, err := deployer.Deploy(context.Background(), "app")
 	if err != nil {
@@ -121,7 +124,7 @@ func TestDeployFetchesAndResetsExistingRepo(t *testing.T) {
 
 	git := &fakeGit{}
 	docker := &fakeDocker{}
-	deployer := newDeployerWithDependencies(testConfig(basePath), nil, git, docker)
+	deployer := newDeployerWithDependencies(testConfig(basePath), testLogger(), nil, git, docker)
 
 	_, err := deployer.Deploy(context.Background(), "app")
 	if err != nil {
@@ -143,7 +146,7 @@ func TestDeployReturnsPartialLogsWhenComposeFails(t *testing.T) {
 	basePath := t.TempDir()
 	git := &fakeGit{}
 	docker := &fakeDocker{composeErr: errors.New("compose failed")}
-	deployer := newDeployerWithDependencies(testConfig(basePath), nil, git, docker)
+	deployer := newDeployerWithDependencies(testConfig(basePath), testLogger(), nil, git, docker)
 
 	logs, err := deployer.Deploy(context.Background(), "app")
 	if err == nil {
@@ -163,7 +166,7 @@ func TestRollbackChecksOutPreviousCommitAndRunsCompose(t *testing.T) {
 
 	git := &fakeGit{previousCommit: "abc123"}
 	docker := &fakeDocker{}
-	deployer := newDeployerWithDependencies(testConfig(basePath), nil, git, docker)
+	deployer := newDeployerWithDependencies(testConfig(basePath), testLogger(), nil, git, docker)
 
 	logs, err := deployer.Rollback(context.Background(), "app")
 	if err != nil {
@@ -188,7 +191,7 @@ func TestRollbackChecksOutPreviousCommitAndRunsCompose(t *testing.T) {
 }
 
 func TestRollbackFailsWhenRepoDoesNotExist(t *testing.T) {
-	deployer := newDeployerWithDependencies(testConfig(t.TempDir()), nil, &fakeGit{}, &fakeDocker{})
+	deployer := newDeployerWithDependencies(testConfig(t.TempDir()), testLogger(), nil, &fakeGit{}, &fakeDocker{})
 
 	_, err := deployer.Rollback(context.Background(), "missing")
 	if err == nil {
@@ -199,14 +202,51 @@ func TestRollbackFailsWhenRepoDoesNotExist(t *testing.T) {
 	}
 }
 
+func TestLockRepoSerializesSameRepository(t *testing.T) {
+	deployer := newDeployerWithDependencies(testConfig(t.TempDir()), testLogger(), nil, &fakeGit{}, &fakeDocker{})
+
+	unlock := deployer.lockRepo("app")
+
+	acquired := make(chan struct{})
+	released := make(chan struct{})
+
+	go func() {
+		defer close(released)
+		secondUnlock := deployer.lockRepo("app")
+		close(acquired)
+		secondUnlock()
+	}()
+
+	select {
+	case <-acquired:
+		t.Fatal("expected second lock acquisition to block")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	unlock()
+
+	select {
+	case <-acquired:
+	case <-time.After(time.Second):
+		t.Fatal("expected second lock acquisition to proceed after unlock")
+	}
+
+	<-released
+}
+
 func testConfig(basePath string) config.Config {
 	return config.Config{
 		DeployBasePath: basePath,
 		GitBaseSSH:     "git@github.com:my-org/",
 		Branch:         "main",
+		CommandTimeout: 5 * time.Second,
 	}
 }
 
 func mkdir(path string) error {
 	return os.MkdirAll(path, 0o755)
+}
+
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

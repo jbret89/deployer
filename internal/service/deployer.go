@@ -3,9 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"deployer/internal/config"
 )
@@ -15,6 +18,8 @@ type Deployer struct {
 	git      gitOperations
 	docker   dockerOperations
 	config   config.Config
+	logger   *slog.Logger
+	locks    sync.Map
 }
 
 type gitOperations interface {
@@ -29,25 +34,31 @@ type dockerOperations interface {
 	ComposeUp(path, service string) error
 }
 
-func NewDeployer(cfg config.Config) *Deployer {
-	executor := NewCommandExecutor()
-	return newDeployerWithDependencies(cfg, executor, NewGitService(executor), NewDockerService(executor))
+func NewDeployer(cfg config.Config, logger *slog.Logger) *Deployer {
+	executor := NewCommandExecutor(logger, cfg.CommandTimeout)
+	return newDeployerWithDependencies(cfg, logger, executor, NewGitService(executor, logger), NewDockerService(executor, logger))
 }
 
-func newDeployerWithDependencies(cfg config.Config, executor *CommandExecutor, git gitOperations, docker dockerOperations) *Deployer {
+func newDeployerWithDependencies(cfg config.Config, logger *slog.Logger, executor *CommandExecutor, git gitOperations, docker dockerOperations) *Deployer {
 	return &Deployer{
 		executor: executor,
 		git:      git,
 		docker:   docker,
 		config:   cfg,
+		logger:   logger,
 	}
 }
 
 func (d *Deployer) Deploy(_ context.Context, repo string) (string, error) {
+	unlock := d.lockRepo(repo)
+	defer unlock()
+
 	repoPath := d.resolveRepoPath(repo)
 	repoSSH := d.resolveRepoSSH(repo)
+	start := time.Now()
 
 	var logs []string
+	d.logger.Info("deploy started", "repo", repo, "path", repoPath, "branch", d.config.Branch)
 
 	if err := os.MkdirAll(d.config.DeployBasePath, 0o755); err != nil {
 		return "", fmt.Errorf("create deploy base path %q: %w", d.config.DeployBasePath, err)
@@ -58,7 +69,7 @@ func (d *Deployer) Deploy(_ context.Context, repo string) (string, error) {
 	case os.IsNotExist(err):
 		logs = append(logs, fmt.Sprintf("cloning %s into %s", repoSSH, repoPath))
 		if err := d.git.Clone(repoSSH, repoPath); err != nil {
-			return strings.Join(logs, "\n"), err
+			return sanitizeOutput(strings.Join(logs, "\n")), err
 		}
 	case err != nil:
 		return "", fmt.Errorf("stat repo path %q: %w", repoPath, err)
@@ -67,28 +78,35 @@ func (d *Deployer) Deploy(_ context.Context, repo string) (string, error) {
 	default:
 		logs = append(logs, fmt.Sprintf("fetching updates in %s", repoPath))
 		if err := d.git.Fetch(repoPath); err != nil {
-			return strings.Join(logs, "\n"), err
+			return sanitizeOutput(strings.Join(logs, "\n")), err
 		}
 
 		logs = append(logs, fmt.Sprintf("resetting repository to origin/%s", d.config.Branch))
 		if err := d.git.ResetHard(repoPath, d.config.Branch); err != nil {
-			return strings.Join(logs, "\n"), err
+			return sanitizeOutput(strings.Join(logs, "\n")), err
 		}
 	}
 
 	logs = append(logs, fmt.Sprintf("running docker compose up for service %s", repo))
 	if err := d.docker.ComposeUp(repoPath, repo); err != nil {
-		return strings.Join(logs, "\n"), err
+		return sanitizeOutput(strings.Join(logs, "\n")), err
 	}
 
 	logs = append(logs, "deploy completed successfully")
-	return strings.Join(logs, "\n"), nil
+	sanitizedLogs := sanitizeOutput(strings.Join(logs, "\n"))
+	d.logger.Info("deploy completed", "repo", repo, "path", repoPath, "duration", time.Since(start).String())
+	return sanitizedLogs, nil
 }
 
 func (d *Deployer) Rollback(_ context.Context, repo string) (string, error) {
+	unlock := d.lockRepo(repo)
+	defer unlock()
+
 	repoPath := d.resolveRepoPath(repo)
+	start := time.Now()
 
 	var logs []string
+	d.logger.Info("rollback started", "repo", repo, "path", repoPath)
 
 	if err := d.ensureRepoDirectory(repoPath); err != nil {
 		return "", err
@@ -97,21 +115,23 @@ func (d *Deployer) Rollback(_ context.Context, repo string) (string, error) {
 	logs = append(logs, fmt.Sprintf("resolving previous commit in %s", repoPath))
 	previousCommit, err := d.git.GetPreviousCommit(repoPath)
 	if err != nil {
-		return strings.Join(logs, "\n"), err
+		return sanitizeOutput(strings.Join(logs, "\n")), err
 	}
 
 	logs = append(logs, fmt.Sprintf("checking out previous commit %s", previousCommit))
 	if err := d.git.CheckoutCommit(repoPath, previousCommit); err != nil {
-		return strings.Join(logs, "\n"), err
+		return sanitizeOutput(strings.Join(logs, "\n")), err
 	}
 
 	logs = append(logs, fmt.Sprintf("running docker compose up for service %s", repo))
 	if err := d.docker.ComposeUp(repoPath, repo); err != nil {
-		return strings.Join(logs, "\n"), err
+		return sanitizeOutput(strings.Join(logs, "\n")), err
 	}
 
 	logs = append(logs, "rollback completed successfully")
-	return strings.Join(logs, "\n"), nil
+	sanitizedLogs := sanitizeOutput(strings.Join(logs, "\n"))
+	d.logger.Info("rollback completed", "repo", repo, "path", repoPath, "duration", time.Since(start).String())
+	return sanitizedLogs, nil
 }
 
 func (d *Deployer) resolveRepoPath(repo string) string {
@@ -139,4 +159,12 @@ func (d *Deployer) ensureRepoDirectory(repoPath string) error {
 	default:
 		return nil
 	}
+}
+
+func (d *Deployer) lockRepo(repo string) func() {
+	lock, _ := d.locks.LoadOrStore(repo, &sync.Mutex{})
+	mutex := lock.(*sync.Mutex)
+	mutex.Lock()
+
+	return mutex.Unlock
 }
