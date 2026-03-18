@@ -7,13 +7,10 @@ services:
     restart: unless-stopped
     ports:
       - "8081:8080"
+    env_file:
+      - .env
     environment:
-      PORT: "8080"
-      LOG_LEVEL: "INFO"
       DEPLOY_BASE_PATH: /repos
-      GIT_BASE_SSH: "git@github.com:"
-      BRANCH: "main"
-      ADMIN_TOKEN: ${ADMIN_TOKEN:-change-me}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./repos:/repos
